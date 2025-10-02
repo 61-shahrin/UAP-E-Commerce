@@ -1,52 +1,46 @@
-from django.shortcuts import render, redirect
-from django.contrib import messages
-from django.contrib.auth import login
-from django.contrib.sites.shortcuts import get_current_site
-from django.template.loader import render_to_string
-from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
-from django.utils.encoding import force_bytes, force_str
-from django.core.mail import send_mail
-from django.conf import settings
-from .forms import SignUpForm
-from .models import CustomUser
-from .tokens import account_activation_token
+from django.shortcuts import render, get_object_or_404
+from django.views.generic import ListView, DetailView
+from .models import Product, Category
 
-def signup(request):
-    if request.method == "POST":
-        form = SignUpForm(request.POST)
-        if form.is_valid():
-            user = form.save(commit=False)
-            user.is_active = False   # Deactivate until confirmed
-            user.save()
+# -----------------------------
+# Function-based views for home & catalog
+# -----------------------------
+def home(request):
+    products = Product.objects.all()  # get all products for homepage
+    return render(request, 'home.html', {'products': products})
 
-            # Send activation email
-            current_site = get_current_site(request)
-            subject = "Activate your account"
-            message = render_to_string("accounts/activation_email.html", {
-                "user": user,
-                "domain": current_site.domain,
-                "uid": urlsafe_base64_encode(force_bytes(user.pk)),
-                "token": account_activation_token.make_token(user),
-            })
-            send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [user.email])
-            messages.info(request, "Please check your email to activate your account.")
-            return redirect("login")
-    else:
-        form = SignUpForm()
-    return render(request, "accounts/signup.html", {"form": form})
+def product_list(request):
+    products = Product.objects.all()
+    return render(request, 'catalog/product_list.html', {'products': products})
 
-def activate(request, uidb64, token):
-    try:
-        uid = force_str(urlsafe_base64_decode(uidb64))
-        user = CustomUser.objects.get(pk=uid)
-    except (TypeError, ValueError, OverflowError, CustomUser.DoesNotExist):
-        user = None
+# -----------------------------
+# Class-based views for categories and product details
+# -----------------------------
+class CategoryListView(ListView):
+    model = Category
+    template_name = 'catalog/category_list.html'
+    context_object_name = 'categories'
 
-    if user is not None and account_activation_token.check_token(user, token):
-        user.is_active = True
-        user.save()
-        login(request, user)
-        messages.success(request, "Your account has been activated!")
-        return redirect("home")
-    else:
-        return render(request, "accounts/activation_invalid.html")
+class ProductListView(ListView):
+    model = Product
+    template_name = 'catalog/product_list.html'
+    context_object_name = 'products'
+    paginate_by = 12
+
+    def get_queryset(self):
+        self.category = get_object_or_404(Category, slug=self.kwargs['category_slug'])
+        return Product.objects.filter(category=self.category, is_active=True)
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['category'] = self.category
+        return ctx
+
+class ProductDetailView(DetailView):
+    model = Product
+    template_name = 'catalog/product_detail.html'
+    context_object_name = 'product'
+
+    def get_object(self):
+        category = get_object_or_404(Category, slug=self.kwargs['category_slug'])
+        return get_object_or_404(Product, category=category, slug=self.kwargs['slug'], is_active=True)
